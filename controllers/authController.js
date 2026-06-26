@@ -100,8 +100,9 @@ const verifyOtp = async (req, res) => {
 
         res.cookie("auth_token", token, {
             httpOnly: true,
-            secure: true,
-            sameSite: "None",
+            secure: true,        // HTTPS only
+            sameSite: "None",    // Required for Vercel <-> Render
+            path: "/",
             maxAge: 1000 * 60 * 60 * 24 * 365,
         });
 
