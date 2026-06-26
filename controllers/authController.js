@@ -196,68 +196,6 @@ const getAllUser = async (req, res) => {
     }
 }
 
-
-// const getAllUser = async (req, res) => {
-//     const loggedInUser = req.user.userId;
-
-//     console.log("==================================");
-//     console.log("Logged In User ID:", loggedInUser);
-
-//     try {
-
-//         const currentUser = await User.findById(loggedInUser);
-
-//         console.log("Current User:");
-//         console.log(currentUser);
-
-//         const users = await User.find({
-//             _id: { $ne: loggedInUser }
-//         })
-//         .select(
-//             "username email profilePicture lastSeen isOnline about phoneNumber phoneSuffix"
-//         )
-//         .lean();
-
-//         console.log("Returned Users:");
-//         console.table(users);
-
-//         const usersWithConversation = await Promise.all(
-//             users.map(async (user) => {
-//                 const conversation = await Conversation.findOne({
-//                     participants: {
-//                         $all: [loggedInUser, user._id]
-//                     }
-//                 })
-//                 .populate({
-//                     path: "lastMessage",
-//                     select: "content createdAt sender receiver"
-//                 })
-//                 .lean();
-
-//                 return {
-//                     ...user,
-//                     conversation: conversation || null,
-//                 };
-//             })
-//         );
-
-//         console.log("Final Response:");
-//         console.table(usersWithConversation);
-
-//         return response(
-//             res,
-//             200,
-//             "User retrieved successfully",
-//             usersWithConversation
-//         );
-
-//     } catch (error) {
-//         console.error(error);
-//         return response(res, 500, "Internal server error");
-//     }
-// };
-
-
 module.exports = {
     sendOtp,
     verifyOtp,
