@@ -63,8 +63,8 @@ exports.createStatus = async(req, res) => {
 
         return response(res, 201, "status created successfully", populateStatus);
     } catch (error) {
-        console.error(error);
-        return response(res, 500, "Internal server error");
+        console.error("createStatus error:", error);
+        return response(res, 500, error.message || "Internal server error");
     }
 };
 

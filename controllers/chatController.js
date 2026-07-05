@@ -84,8 +84,8 @@ exports.sendMessage = async(req, res) => {
 
         return response(res, 201, "Message send successfully", populateMessage);
     } catch (error) {
-        console.error(error);
-        return response(res, 500, "Internal server error");
+        console.error("sendMessage error:", error);
+        return response(res, 500, error.message || "Internal server error");
     }
 };
 

@@ -45,8 +45,8 @@ const sendOtp = async (req, res) => {
 
         return response(res, 200, 'Otp send successfully', user);
     } catch (error) {
-        console.error(error);
-        return response(res, 500, 'Internal server error');
+        console.error("sendOtp error:", error);
+        return response(res, 500, error.message || 'Internal server error');
     }
 }
 
@@ -134,8 +134,8 @@ const updateProfile = async (req, res) => {
         await user.save();
         return response(res, 200, 'user profile update sucessfully', user);
     } catch (error) {
-        console.log(error);
-        return response(res, 500, "Intrenal server error");
+        console.log("updateProfile error:", error);
+        return response(res, 500, error.message || "Internal server error");
     }
 }
 

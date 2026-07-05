@@ -55,7 +55,7 @@ const io = initializeSocket(server);
 //apply socket middleware before routes
 app.use((req, res, next) => {
     req.io = io;
-    req.socketUserMap = io.sockets.socketUserMap;
+    req.socketUserMap = io.socketUserMap;
     next();
 })
 
