@@ -9,12 +9,18 @@ const onlineUser = new Map();
 const typingUsers = new Map();
 
 const initializeSocket = (server) => {
+    const allowedOrigins = [
+        process.env.FRONTEND_URL,
+        'https://smart-talk-frontend.vercel.app'
+    ].filter(Boolean).map(origin => origin.replace(/\/$/, ''));
+
     const io = new Server(server, {
         cors: {
             origin: (origin, callback) => {
                 if (!origin) return callback(null, true);
-                const isLocalhost = origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:');
-                if (process.env.FRONTEND_URL === origin || isLocalhost) {
+                const normalizedOrigin = origin.replace(/\/$/, '');
+                const isLocalhost = normalizedOrigin.startsWith('http://localhost:') || normalizedOrigin.startsWith('http://127.0.0.1:');
+                if (allowedOrigins.includes(normalizedOrigin) || isLocalhost) {
                     callback(null, true);
                 } else {
                     callback(new Error('Not allowed by CORS'));

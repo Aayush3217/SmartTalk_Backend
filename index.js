@@ -16,12 +16,17 @@ dotenv.config();
 const PORT = process.env.PORT;
 const app = express();
 
-const allowedOrigins = [process.env.FRONTEND_URL];
+const allowedOrigins = [
+    process.env.FRONTEND_URL,
+    'https://smart-talk-frontend.vercel.app'
+].filter(Boolean).map(origin => origin.replace(/\/$/, ''));
+
 const corsOptions = {
     origin: (origin, callback) => {
         if (!origin) return callback(null, true);
-        const isLocalhost = origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:');
-        if (allowedOrigins.includes(origin) || isLocalhost) {
+        const normalizedOrigin = origin.replace(/\/$/, '');
+        const isLocalhost = normalizedOrigin.startsWith('http://localhost:') || normalizedOrigin.startsWith('http://127.0.0.1:');
+        if (allowedOrigins.includes(normalizedOrigin) || isLocalhost) {
             callback(null, true);
         } else {
             callback(new Error('Not allowed by CORS'));

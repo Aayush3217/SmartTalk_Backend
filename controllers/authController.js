@@ -158,7 +158,13 @@ const checkAuthenticated = async (req, res) => {
 
 const logout = (req, res) => {
     try {
-        res.cookie("auth_token", "", { expires: new Date(0) });
+        res.cookie("auth_token", "", {
+            httpOnly: true,
+            secure: true,
+            sameSite: "None",
+            path: "/",
+            expires: new Date(0)
+        });
         return response(res, 200, 'user logout successfully')
     } catch (error) {
         console.error(error);
