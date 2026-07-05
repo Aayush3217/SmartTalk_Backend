@@ -7,6 +7,7 @@ const bodyParser = require('body-parser')
 const authRoute = require('./routes/authRoute')
 const chatRoute = require('./routes/chatRoute');
 const statusRoute = require('./routes/statusRoute');
+const aiRoute = require('./routes/aiRoute');
 const http = require('http');
 const initializeSocket = require('./services/socketService');
  
@@ -63,7 +64,8 @@ app.use((req, res, next) => {
 //Routes
 app.use('/api/auth', authRoute);
 app.use('/api/chats', chatRoute);
-app.use('/api/status', statusRoute)
+app.use('/api/status', statusRoute);
+app.use('/api/ai', aiRoute);
 
 server.listen(PORT, () => {
     console.log(`Server running on this port: ${PORT}`)
