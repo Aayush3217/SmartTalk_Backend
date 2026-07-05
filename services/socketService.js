@@ -11,7 +11,15 @@ const typingUsers = new Map();
 const initializeSocket = (server) => {
     const io = new Server(server, {
         cors: {
-            origin: process.env.FRONTEND_URL,
+            origin: (origin, callback) => {
+                if (!origin) return callback(null, true);
+                const isLocalhost = origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:');
+                if (process.env.FRONTEND_URL === origin || isLocalhost) {
+                    callback(null, true);
+                } else {
+                    callback(new Error('Not allowed by CORS'));
+                }
+            },
             credentials: true, // client side sa jab bhejta ha [cookies ka andar token ha ya nahi]
             methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
         },
@@ -34,7 +42,7 @@ const initializeSocket = (server) => {
 
                 //update user status in db
                 await User.findByIdAndUpdate(userId, {
-                    inOnline: true,
+                    isOnline: true,
                     lastSeen: new Date(),
                 });
 

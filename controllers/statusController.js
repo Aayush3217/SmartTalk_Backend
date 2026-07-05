@@ -22,9 +22,9 @@ exports.createStatus = async(req, res) => {
             }
             mediaUrl = uploadFile?.secure_url;
 
-            if(file.mimetype.startwith("image")){
+            if(file.mimetype.startsWith("image")){
                 finalContentType = "image";
-            }else if(file.mimetype.startwith("video")){
+            }else if(file.mimetype.startsWith("video")){
                 finalContentType = "video";
             }else{
                 return response(res, 400, "Unsupported file type");
@@ -54,7 +54,7 @@ exports.createStatus = async(req, res) => {
         //Emit socket event
         if(req.io && req.socketUserMap){
             // Broadcast to all connecting users except the creator
-            for(cont [connectedUserId, socketId] of req.socketUserMap){
+            for(const [connectedUserId, socketId] of req.socketUserMap){
                 if(connectedUserId !== userId){
                     req.io.to(socketId).emit("new_status", populateStatus);
                 }
@@ -111,10 +111,10 @@ exports.viewStatus = async(req, res) => {
                 const viewData = {
                     statusId,
                     viewerId: userId,
-                    totalViewers: updatedStatus.viewers.length,
-                    viewers: updatedStatus.viewers
+                    totalViewers: updateStatus.viewers.length,
+                    viewers: updateStatus.viewers
                 }
-                res.io.to(statusOwnerSocketId).emit("status_viewed", viewData)
+                req.io.to(statusOwnerSocketId).emit("status_viewed", viewData)
             }else{
                 console.log('status owner not connected');
             }
