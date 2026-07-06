@@ -2,6 +2,8 @@ const { uploadFileToCloudinary } = require("../config/cloudinaryConfig");
 const Conversation = require('../models/Conversation');
 const Message = require('../models/Message');
 const response = require('../utils/responseHandler');
+const User = require('../models/users');
+const translateText = require('../services/translateService');
 
 
 exports.sendMessage = async(req, res) => {
@@ -68,21 +70,62 @@ exports.sendMessage = async(req, res) => {
 
 
         const populateMessage = await Message.findById(message?._id)
-        .populate("sender", "username profilePicture")
-        .populate("receiver", "username profilePicture")
+            .populate("sender", "username profilePicture preferredLanguage")
+            .populate("receiver", "username profilePicture preferredLanguage");
 
-        // Emit socket event for realtime
-        if(req.io && req.socketUserMap){
-            const receiverSocketId = req.socketUserMap.get(receiverId);
-            if(receiverSocketId){
-                req.io.to(receiverSocketId).emit("receive_message", populateMessage);
-                message.messageStatus = "delivered";
+        // Return REST response immediately to the sender to avoid UI block/lag
+        response(res, 201, "Message send successfully", populateMessage);
+
+        // Run translation and Socket.IO emission in the background asynchronously
+        (async () => {
+            let needsSave = false;
+
+            if (contentType === 'text' && content) {
+                const senderUser = await User.findById(senderId);
+                const receiverUser = await User.findById(receiverId);
+
+                if (senderUser && receiverUser) {
+                    const sourceLang = senderUser.preferredLanguage || 'English';
+                    const targetLang = receiverUser.preferredLanguage || 'English';
+
+                    message.originalLanguage = sourceLang;
+                    needsSave = true;
+
+                    if (sourceLang.toLowerCase() !== targetLang.toLowerCase()) {
+                        try {
+                            const translatedText = await translateText(content, sourceLang, targetLang);
+                            if (translatedText && translatedText !== content) {
+                                message.translations.push({
+                                    language: targetLang,
+                                    content: translatedText
+                                });
+                            }
+                        } catch (err) {
+                            console.error("Background translation failed:", err.message);
+                        }
+                    }
+                }
+            }
+
+            if (needsSave) {
                 await message.save();
             }
-        }
 
+            // Fetch the fully updated message with translations
+            const finalMessage = await Message.findById(message._id)
+                .populate("sender", "username profilePicture preferredLanguage")
+                .populate("receiver", "username profilePicture preferredLanguage");
 
-        return response(res, 201, "Message send successfully", populateMessage);
+            // Emit socket event for realtime delivery
+            if (req.io && req.socketUserMap) {
+                const receiverSocketId = req.socketUserMap.get(receiverId);
+                if (receiverSocketId) {
+                    req.io.to(receiverSocketId).emit("receive_message", finalMessage);
+                    message.messageStatus = "delivered";
+                    await message.save();
+                }
+            }
+        })().catch(err => console.error("Background message dispatch error:", err));
     } catch (error) {
         console.error("sendMessage error:", error);
         return response(res, 500, error.message || "Internal server error");

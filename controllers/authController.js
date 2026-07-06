@@ -114,7 +114,7 @@ const verifyOtp = async (req, res) => {
 }
 
 const updateProfile = async (req, res) => {
-    const { username, agreed, about } = req.body;
+    const { username, agreed, about, preferredLanguage } = req.body;
     const userId = req.user.userId;
 
     try {
@@ -131,6 +131,7 @@ const updateProfile = async (req, res) => {
         if (username) user.username = username;
         if (agreed) user.agreed = agreed;
         if (about) user.about = about;
+        if (preferredLanguage) user.preferredLanguage = preferredLanguage;
         await user.save();
         return response(res, 200, 'user profile update sucessfully', user);
     } catch (error) {

@@ -18,4 +18,7 @@ router.post('/chat-summary', authMiddleware, aiController.getChatSummary);
 // Protected route to improve user message drafts
 router.post('/improve-message', authMiddleware, aiController.improveMessage);
 
+// Protected route to translate messages in real time
+router.post('/translate', authMiddleware, aiController.translateTextAPI);
+
 module.exports = router;

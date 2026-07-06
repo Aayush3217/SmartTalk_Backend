@@ -20,6 +20,7 @@ const userSchema = new mongoose.Schema({
     isOnline: { type: Boolean, default: false },
     isVerified: { type: Boolean, default: false },
     about: {type: String},
+    preferredLanguage: { type: String, default: 'English' },
     agreed: { type: Boolean, default: false }
 }, {timestamps: true})
 

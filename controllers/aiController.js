@@ -2,6 +2,7 @@ const axios = require('axios');
 const response = require('../utils/responseHandler');
 const fs = require('fs');
 const Message = require('../models/Message');
+const translateText = require('../services/translateService');
 
 exports.getSmartReplies = async (req, res) => {
     try {
@@ -399,5 +400,28 @@ Response format:
     } catch (error) {
         console.error("Error in improveMessage:", error.message);
         return response(res, 500, error.message || "Failed to generate AI suggestions");
+    }
+};
+
+exports.translateTextAPI = async (req, res) => {
+    const { text, sourceLanguage, targetLanguage } = req.body;
+
+    try {
+        if (!text || typeof text !== 'string' || !text.trim()) {
+            return response(res, 400, "Text is required and must be a non-empty string");
+        }
+        if (!sourceLanguage || !targetLanguage) {
+            return response(res, 400, "Both sourceLanguage and targetLanguage are required");
+        }
+
+        const translatedText = await translateText(text, sourceLanguage, targetLanguage);
+
+        return response(res, 200, "Translated successfully", {
+            translatedText,
+            translated: translatedText
+        });
+    } catch (error) {
+        console.error("Error in translateTextAPI:", error.message);
+        return response(res, 500, error.message || "Failed to translate text");
     }
 };

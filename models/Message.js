@@ -12,6 +12,11 @@ const messageSchema = new mongoose.Schema({
         emoji:String
     }],
     messageStatus: {type: String, default:'send'},
+    originalLanguage: { type: String, default: 'English' },
+    translations: [{
+        language: String,
+        content: String
+    }],
 }, {timestamps: true})
 
 const Message = mongoose.model('Message', messageSchema);
