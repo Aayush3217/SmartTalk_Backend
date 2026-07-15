@@ -122,7 +122,7 @@ exports.sendMessage = async(req, res) => {
             if (req.io && req.socketUserMap) {
                 const receiverSocketId = await req.socketUserMap.getSocketId(receiverId);
                 if (receiverSocketId) {
-                    req.io.to(receiverSocketId).emit("receive_message", finalMessage);
+                    req.io.to(receiverId).emit("receive_message", finalMessage);
                     message.messageStatus = "delivered";
                     await message.save();
                 }
@@ -228,7 +228,7 @@ exports.markAsRead = async(req, res) => {
                         _id: message._id,
                         messageStatus: "read",
                     };
-                    req.io.to(senderSocketId).emit("message_read", updateMessage);
+                    req.io.to(message.sender.toString()).emit("message_read", updateMessage);
                     await message.save();
                 }
             }
@@ -268,7 +268,7 @@ exports.deleteMessage = async(req, res) => {
         if(req.io && req.socketUserMap){
             const receiverSocketId = await req.socketUserMap.getSocketId(message.receiver.toString());
             if(receiverSocketId){
-                req.io.to(receiverSocketId).emit("message_deleted", messageId);
+                req.io.to(message.receiver.toString()).emit("message_deleted", messageId);
             }
         }
 

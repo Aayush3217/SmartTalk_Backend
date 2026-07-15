@@ -115,7 +115,7 @@ exports.viewStatus = async(req, res) => {
                     totalViewers: updateStatus.viewers.length,
                     viewers: updateStatus.viewers
                 }
-                req.io.to(statusOwnerSocketId).emit("status_viewed", viewData)
+                req.io.to(status.user._id.toString()).emit("status_viewed", viewData)
             }else{
                 console.log('status owner not connected');
             }

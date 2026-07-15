@@ -72,9 +72,9 @@ const initializeSocket = (server) => {
         socket.on("send_message", async (message) => {
             try {
                 const receiverSocketId = await redisService.getSocketId(message.receiver?._id);
-                // Instantly sends message to receiver.
+                // Instantly sends message to receiver's room.
                 if (receiverSocketId) {
-                    io.to(receiverSocketId).emit("receive_message", message);
+                    io.to(message.receiver?._id).emit("receive_message", message);
                 }
             } catch (error) {
                 console.error("Error sending message", error)
@@ -93,7 +93,7 @@ const initializeSocket = (server) => {
                 const senderSocketId = await redisService.getSocketId(senderId);
                 if (senderSocketId) {
                     messageIds.forEach((messageId) => {
-                        io.to(senderSocketId).emit("message_status_update", {
+                        io.to(senderId).emit("message_status_update", {
                             messageId,
                             messageStatus: "read"
                         })
@@ -196,8 +196,8 @@ const initializeSocket = (server) => {
                 const senderSocket = await redisService.getSocketId(populateMessage.sender._id.toString());
                 const receiverSocket = await redisService.getSocketId(populateMessage.receiver?._id.toString());
 
-                if (senderSocket) io.to(senderSocket).emit("reaction_update", reactionUpdated);
-                if (receiverSocket) io.to(receiverSocket).emit("reaction_update", reactionUpdated);
+                if (senderSocket) io.to(populateMessage.sender._id.toString()).emit("reaction_update", reactionUpdated);
+                if (receiverSocket) io.to(populateMessage.receiver?._id.toString()).emit("reaction_update", reactionUpdated);
 
             } catch (error) {
                 console.error("Error handling reactions", error);
@@ -208,7 +208,21 @@ const initializeSocket = (server) => {
         const handleDisconnected = async () => {
             if (!userId) return;
             try {
-                await redisService.removeUserOnline(userId);
+                // Prevent race condition: check if this disconnecting socket is still the active one
+                const currentSocketId = await redisService.getSocketId(userId);
+                if (currentSocketId === socket.id) {
+                    await redisService.removeUserOnline(userId);
+
+                    await User.findByIdAndUpdate(userId, {
+                        isOnline: false,
+                        lastSeen: new Date(),
+                    });
+
+                    io.emit("user_status", { userId, isOnline: false, lastSeen: new Date() });
+                    console.log(`user ${userId} disconnected`);
+                } else {
+                    console.log(`Socket mismatch for user ${userId}: current is ${currentSocketId}, disconnecting is ${socket.id}. Skipping offline status update.`);
+                }
 
                 //clear all typing timeouts
                 if (typingUsers.has(userId)) {
@@ -220,15 +234,7 @@ const initializeSocket = (server) => {
                     typingUsers.delete(userId);
                 }
 
-                await User.findByIdAndUpdate(userId, {
-                    isOnline: false,
-                    lastSeen: new Date(),
-                })
-
-                io.emit("user_status", { userId, isOnline: false, lastSeen: new Date() });
-
                 socket.leave(userId);
-                console.log(`user ${userId} disconnected`);
             } catch (error) {
                 console.error("Error handling disconnection", error);
             }
