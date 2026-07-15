@@ -7,6 +7,8 @@ const generateToken = require("../utils/generateToken");
 const { uploadFileToCloudinary } = require("../config/cloudinaryConfig");
 const Conversation = require('../models/Conversation');
 const redisService = require('../services/redisService');
+const bcrypt = require('bcryptjs');
+const { redis, isRedisAvailable } = require("../config/redis");
 
 
 //step-1 Send Otp
@@ -146,18 +148,67 @@ const verifyOtp = async (req, res) => {
 
 // Step-3 Manual Register & Login (No OTP)
 const registerManual = async (req, res) => {
-    const { username, email, preferredLanguage, about } = req.body;
+    const { username, email, password, preferredLanguage, about } = req.body;
     const file = req.file;
 
-    if (!username || !email) {
-        return response(res, 400, "Username and email are required");
+    if (!email || !password) {
+        return response(res, 400, "Email and password are required");
     }
 
     try {
         let user = await User.findOne({ email });
 
         if (user) {
-            // User exists, update optional details and log in
+            const wrongPasswordKey = `rate:wrong-password:${email}`;
+
+            if (isRedisAvailable()) {
+                const wrongCount = await redis.get(wrongPasswordKey);
+                if (wrongCount && parseInt(wrongCount, 10) >= 5) {
+                    // Check if it has a TTL. If not, set it to prevent key from living forever
+                    const ttl = await redis.ttl(wrongPasswordKey);
+                    if (ttl < 0) {
+                        await redis.expire(wrongPasswordKey, 60);
+                    }
+                    return response(res, 429, "Too many registration attempts.");
+                }
+            }
+
+            // User exists, verify password if stored
+            if (user.password) {
+                const isMatch = await bcrypt.compare(password, user.password);
+                if (!isMatch) {
+                    if (isRedisAvailable()) {
+                        const currentCount = await redis.incr(wrongPasswordKey);
+                        
+                        // Set TTL on first fail OR on lockout threshold (fresh 60s lockout)
+                        if (currentCount === 1 || currentCount === 5) {
+                            await redis.expire(wrongPasswordKey, 60);
+                        } else {
+                            // Ensure TTL is always set in case of any edge cases
+                            const ttl = await redis.ttl(wrongPasswordKey);
+                            if (ttl < 0) {
+                                await redis.expire(wrongPasswordKey, 60);
+                            }
+                        }
+                        
+                        if (currentCount >= 5) {
+                            return response(res, 429, "Too many registration attempts.");
+                        }
+                    }
+                    return response(res, 400, "Incorrect password for this email");
+                }
+            } else {
+                // If user didn't have a password set (e.g. from phone signup), set it now
+                const salt = await bcrypt.genSalt(10);
+                user.password = await bcrypt.hash(password, salt);
+            }
+
+            // Password matches, delete wrong password lock if any
+            if (isRedisAvailable()) {
+                await redis.del(wrongPasswordKey);
+            }
+
+            // Update details and log in
             if (username) user.username = username;
             if (preferredLanguage) user.preferredLanguage = preferredLanguage;
             if (about) user.about = about;
@@ -172,9 +223,17 @@ const registerManual = async (req, res) => {
             await user.save();
         } else {
             // Create new user
+            if (!username) {
+                return response(res, 400, "Username is required for new registration");
+            }
+
+            const salt = await bcrypt.genSalt(10);
+            const hashedPassword = await bcrypt.hash(password, salt);
+
             user = new User({
                 username,
                 email,
+                password: hashedPassword,
                 preferredLanguage: preferredLanguage || 'English',
                 about: about || 'Hey there! I am using WhatsApp.',
                 isOnline: true,
