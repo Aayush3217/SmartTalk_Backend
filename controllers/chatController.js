@@ -4,6 +4,7 @@ const Message = require('../models/Message');
 const response = require('../utils/responseHandler');
 const User = require('../models/users');
 const translateText = require('../services/translateService');
+const redisService = require('../services/redisService');
 
 
 exports.sendMessage = async(req, res) => {
@@ -61,6 +62,7 @@ exports.sendMessage = async(req, res) => {
         });
 
         await message.save();
+        await redisService.invalidateChatCache(conversation?._id.toString());
 
         if(message?.content){ // if content is coming 
             conversation.lastMessage = message?._id;
@@ -118,7 +120,7 @@ exports.sendMessage = async(req, res) => {
 
             // Emit socket event for realtime delivery
             if (req.io && req.socketUserMap) {
-                const receiverSocketId = req.socketUserMap.get(receiverId);
+                const receiverSocketId = await req.socketUserMap.getSocketId(receiverId);
                 if (receiverSocketId) {
                     req.io.to(receiverSocketId).emit("receive_message", finalMessage);
                     message.messageStatus = "delivered";
@@ -168,10 +170,18 @@ exports.getMessages = async(req, res) => {
             return response(res, 403, "Not authorized to view this conversation")
         }
 
-        const message = await Message.find({conversation:conversationId})
-        .populate("sender", "username profilePicture")
-        .populate("receiver", "username profilePicture")
-        .sort("createdAt");
+        // Try to fetch from Redis cache first
+        let message = await redisService.getCachedMessages(conversationId);
+
+        if (!message) {
+            message = await Message.find({conversation:conversationId})
+            .populate("sender", "username profilePicture")
+            .populate("receiver", "username profilePicture")
+            .sort("createdAt");
+
+            // Cache the latest 50 messages
+            await redisService.setCachedMessages(conversationId, message);
+        }
 
         await Message.updateMany(
             {
@@ -212,7 +222,7 @@ exports.markAsRead = async(req, res) => {
         // notify to original sender
         if(req.io && req.socketUserMap){
             for(const message of messages){
-                const senderSocketId = req.socketUserMap.get(message.sender.toString());
+                const senderSocketId = await req.socketUserMap.getSocketId(message.sender.toString());
                 if(senderSocketId){
                     const updateMessage = {
                         _id: message._id,
@@ -223,6 +233,12 @@ exports.markAsRead = async(req, res) => {
                 }
             }
         }                  
+
+        // Invalidate cache for the conversation
+        const uniqueConvIds = [...new Set(messages.map(m => m.conversation.toString()))];
+        for (const convId of uniqueConvIds) {
+            await redisService.invalidateChatCache(convId);
+        }
 
         return response(res, 200, "Message marked as read", messages);
     } catch (error) {
@@ -246,10 +262,11 @@ exports.deleteMessage = async(req, res) => {
         }
 
         await message.deleteOne();
+        await redisService.invalidateChatCache(message.conversation.toString());
 
         // Emit socket event
         if(req.io && req.socketUserMap){
-            const receiverSocketId = req.socketUserMap.get(message.receiver.toString());
+            const receiverSocketId = await req.socketUserMap.getSocketId(message.receiver.toString());
             if(receiverSocketId){
                 req.io.to(receiverSocketId).emit("message_deleted", messageId);
             }

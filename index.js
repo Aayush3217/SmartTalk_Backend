@@ -62,6 +62,17 @@ app.use((req, res, next) => {
 
 
 //Routes
+app.get('/health', async (req, res) => {
+    const mongoStatus = require('mongoose').connection.readyState === 1 ? 'connected' : 'disconnected';
+    const redisStatus = require('./services/redisService').isRedisAvailable() ? 'connected' : 'disconnected';
+    
+    return res.status(200).json({
+        server: "OK",
+        mongodb: mongoStatus,
+        redis: redisStatus
+    });
+});
+
 app.use('/api/auth', authRoute);
 app.use('/api/chats', chatRoute);
 app.use('/api/status', statusRoute);

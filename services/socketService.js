@@ -1,9 +1,7 @@
 const { Server } = require('socket.io');
 const User = require('../models/users');
 const Message = require('../models/Message');
-
-// Map to store online users -> userId, socketId
-const onlineUser = new Map();
+const redisService = require('./redisService');
 
 //Map to track typing status -> userId -> [converstion]: boolean
 const typingUsers = new Map();
@@ -43,7 +41,7 @@ const initializeSocket = (server) => {
         socket.on("user_connected", async (connectingUserId) => {
             try {
                 userId = connectingUserId;
-                onlineUser.set(userId, socket.id);
+                await redisService.setUserOnline(userId, socket.id);
                 socket.join(userId); // join a personal room for direct emits
 
                 //update user status in db
@@ -61,8 +59,8 @@ const initializeSocket = (server) => {
         });
 
         //Return online status of requested user
-        socket.on("get_user_status", (requestedUserId, callback) => {
-            const isOnline = onlineUser.has(requestedUserId);
+        socket.on("get_user_status", async (requestedUserId, callback) => {
+            const isOnline = await redisService.isUserOnline(requestedUserId);
             callback({
                 userId: requestedUserId,
                 isOnline,
@@ -73,7 +71,7 @@ const initializeSocket = (server) => {
         // forward message to receiver if online
         socket.on("send_message", async (message) => {
             try {
-                const receiverSocketId = onlineUser.get(message.receiver?._id);
+                const receiverSocketId = await redisService.getSocketId(message.receiver?._id);
                 // Instantly sends message to receiver.
                 if (receiverSocketId) {
                     io.to(receiverSocketId).emit("receive_message", message);
@@ -92,7 +90,7 @@ const initializeSocket = (server) => {
                     { $set: { messageStatus: "read" } }
                 )
 
-                const senderSocketId = onlineUser.get(senderId);
+                const senderSocketId = await redisService.getSocketId(senderId);
                 if (senderSocketId) {
                     messageIds.forEach((messageId) => {
                         io.to(senderSocketId).emit("message_status_update", {
@@ -195,8 +193,8 @@ const initializeSocket = (server) => {
                     reactions: populateMessage.reactions
                 }
 
-                const senderSocket = onlineUser.get(populateMessage.sender._id.toString());
-                const receiverSocket = onlineUser.get(populateMessage.receiver?._id.toString());
+                const senderSocket = await redisService.getSocketId(populateMessage.sender._id.toString());
+                const receiverSocket = await redisService.getSocketId(populateMessage.receiver?._id.toString());
 
                 if (senderSocket) io.to(senderSocket).emit("reaction_update", reactionUpdated);
                 if (receiverSocket) io.to(receiverSocket).emit("reaction_update", reactionUpdated);
@@ -210,7 +208,7 @@ const initializeSocket = (server) => {
         const handleDisconnected = async () => {
             if (!userId) return;
             try {
-                onlineUser.delete(userId);
+                await redisService.removeUserOnline(userId);
 
                 //clear all typing timeouts
                 if (typingUsers.has(userId)) {
@@ -239,8 +237,8 @@ const initializeSocket = (server) => {
         // disconnect event
         socket.on("disconnect", handleDisconnected);
     });
-    //attach the online user map to the socket serevr for external user
-    io.socketUserMap = onlineUser;
+    //attach the online user map helper wrapper to the socket server for external user
+    io.socketUserMap = redisService;
 
     return io;
 }

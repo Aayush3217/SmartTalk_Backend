@@ -6,27 +6,34 @@ const twilioService = require("../services/twilioService");
 const generateToken = require("../utils/generateToken");
 const { uploadFileToCloudinary } = require("../config/cloudinaryConfig");
 const Conversation = require('../models/Conversation');
+const redisService = require('../services/redisService');
 
 
 //step-1 Send Otp
 const sendOtp = async (req, res) => {
-    const { phoneNumber, phoneSuffix, email } = req.body;
-    const otp = otpGenerate();
-    const expiry = new Date(Date.now() + 5 * 60 * 1000);
+    const { phoneNumber, phoneSuffix, email, mode } = req.body;
     let user;
     try {
         if (email) {
             user = await User.findOne({ email });
 
-            // Create new User
-            if (!user) {
-                user = new User({ email })
+            if (mode === 'login' && !user) {
+                return response(res, 404, 'Account not found. Please sign up first.');
+            }
+            if (mode === 'signup' && user) {
+                return response(res, 400, 'Account already exists. Please log in instead.');
             }
 
-            //User Already exists!
-            user.emailOtp = otp;
-            user.emailOtpExpiry = expiry;
-            await user.save();
+            // Create new User
+            if (!user) {
+                user = new User({ email });
+                await user.save();
+            }
+
+            const otp = otpGenerate();
+            // Store OTP in Redis instead of MongoDB (Feature 2)
+            await redisService.saveOtp(email, otp);
+
             await sendOtpToEmail(email, otp);
             return response(res, 200, 'Otp send to your email', { email });
         }
@@ -34,13 +41,32 @@ const sendOtp = async (req, res) => {
         if (!phoneNumber || !phoneSuffix) {
             return response(res, 400, 'Phone number and phone suffix are required');
         }
+
+        user = await User.findOne({ phoneNumber, phoneSuffix });
+
+        if (mode === 'login' && !user) {
+            return response(res, 404, 'Account not found. Please sign up first.');
+        }
+        if (mode === 'signup' && user) {
+            return response(res, 400, 'Account already exists. Please log in instead.');
+        }
+
         const fullPhoneNumber = `${phoneSuffix}${phoneNumber}`;
-        user = await User.findOne({ phoneNumber });
         if (!user) {
             user = new User({ phoneNumber, phoneSuffix })
         }
 
-        await twilioService.sendOtpToPhoneNumber(fullPhoneNumber);
+        const hasTwilio = process.env.TWILIO_ACCOUNT_SID && 
+                          process.env.TWILIO_ACCOUNT_SID !== 'paste_your_twilio_account_sid_here';
+
+        if (hasTwilio) {
+            await twilioService.sendOtpToPhoneNumber(fullPhoneNumber);
+        } else {
+            const otp = otpGenerate();
+            await redisService.saveOtp(fullPhoneNumber, otp);
+            console.log(`[LOCAL DEV SMS] OTP code for ${fullPhoneNumber} is: ${otp}`);
+        }
+
         await user.save();
 
         return response(res, 200, 'Otp send successfully', user);
@@ -63,17 +89,15 @@ const verifyOtp = async (req, res) => {
                 return response(res, 404, 'User not found');
             }
 
-            const now = new Date();
-            if (!user.emailOtp || String(user.emailOtp) !== String(otp) || now > new Date(user.emailOtpExpiry)) {
+            // Verify using Redis instead of MongoDB (Feature 2)
+            const isVerified = await redisService.verifyAndDestroyOtp(email, otp);
+            if (!isVerified) {
                 return response(res, 400, 'Invalid or expired otp');
-            };
+            }
 
             user.isVerified = true;
-            user.emailOtp = null;
-            user.emailOtpExpiry = null;
             await user.save();
-        }
-        else {
+        } else {
             if (!phoneNumber || !phoneSuffix) {
                 return response(res, 400, 'Phone number and phone suffix are required');
             }
@@ -83,20 +107,27 @@ const verifyOtp = async (req, res) => {
             if (!user) {
                 return response(res, 404, "User not found");
             }
-            const result = await twilioService.verifyOtp(fullPhoneNumber, otp);
-            if (result.status !== "approved") {
-                return response(res, 400, "Invalid Otp");
+
+            const hasTwilio = process.env.TWILIO_ACCOUNT_SID && 
+                              process.env.TWILIO_ACCOUNT_SID !== 'paste_your_twilio_account_sid_here';
+
+            if (hasTwilio) {
+                const result = await twilioService.verifyOtp(fullPhoneNumber, otp);
+                if (result.status !== "approved") {
+                    return response(res, 400, "Invalid Otp");
+                }
+            } else {
+                const isVerified = await redisService.verifyAndDestroyOtp(fullPhoneNumber, otp);
+                if (!isVerified) {
+                    return response(res, 400, "Invalid or expired Otp");
+                }
             }
+
             user.isVerified = true;
             await user.save();
         }
 
         const token = generateToken(user?._id); // this is authentaction
-
-        // res.cookie("auth_token", token, {
-        //     httpOnly: true,
-        //     maxAge: 1000 * 60 * 60 * 24 * 365
-        // });
 
         res.cookie("auth_token", token, {
             httpOnly: true,
@@ -110,6 +141,67 @@ const verifyOtp = async (req, res) => {
     } catch (error) {
         console.log(error);
         return response(res, 500, "Internal server error");
+    }
+}
+
+// Step-3 Manual Register & Login (No OTP)
+const registerManual = async (req, res) => {
+    const { username, email, preferredLanguage, about } = req.body;
+    const file = req.file;
+
+    if (!username || !email) {
+        return response(res, 400, "Username and email are required");
+    }
+
+    try {
+        let user = await User.findOne({ email });
+
+        if (user) {
+            // User exists, update optional details and log in
+            if (username) user.username = username;
+            if (preferredLanguage) user.preferredLanguage = preferredLanguage;
+            if (about) user.about = about;
+            
+            if (file) {
+                const uploadResult = await uploadFileToCloudinary(file);
+                user.profilePicture = uploadResult?.secure_url;
+            }
+            
+            user.isOnline = true;
+            user.isVerified = true;
+            await user.save();
+        } else {
+            // Create new user
+            user = new User({
+                username,
+                email,
+                preferredLanguage: preferredLanguage || 'English',
+                about: about || 'Hey there! I am using WhatsApp.',
+                isOnline: true,
+                isVerified: true
+            });
+
+            if (file) {
+                const uploadResult = await uploadFileToCloudinary(file);
+                user.profilePicture = uploadResult?.secure_url;
+            }
+            await user.save();
+        }
+
+        const token = generateToken(user._id);
+
+        res.cookie("auth_token", token, {
+            httpOnly: true,
+            secure: true,
+            sameSite: "None",
+            path: "/",
+            maxAge: 1000 * 60 * 60 * 24 * 365,
+        });
+
+        return response(res, 200, 'User logged in successfully', { token, user });
+    } catch (error) {
+        console.error("registerManual error:", error);
+        return response(res, 500, error.message || "Internal server error");
     }
 }
 
@@ -206,6 +298,7 @@ const getAllUser = async (req, res) => {
 module.exports = {
     sendOtp,
     verifyOtp,
+    registerManual,
     updateProfile,
     logout,
     checkAuthenticated,

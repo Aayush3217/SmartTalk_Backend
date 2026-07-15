@@ -20,7 +20,10 @@ const sendOtpToPhoneNumber = async(phoneNumber) => {
         });
     }catch(error){
         console.log(error);
-        throw new Error('Failed to send otp');
+        if (error.code === 21608) {
+            throw new Error('Twilio Trial restriction: The phone number is unverified. Verify it in your Twilio Console (Verified Caller IDs).');
+        }
+        throw new Error(error.message || 'Failed to send otp');
     }
 }
 

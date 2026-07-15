@@ -54,7 +54,8 @@ exports.createStatus = async(req, res) => {
         //Emit socket event
         if(req.io && req.socketUserMap){
             // Broadcast to all connecting users except the creator
-            for(const [connectedUserId, socketId] of req.socketUserMap){
+            const onlineUsersList = await req.socketUserMap.getAllOnlineUsers();
+            for(const [connectedUserId, socketId] of onlineUsersList){
                 if(connectedUserId !== userId){
                     req.io.to(socketId).emit("new_status", populateStatus);
                 }
@@ -106,7 +107,7 @@ exports.viewStatus = async(req, res) => {
         //Emit socket event
         if(req.io && req.socketUserMap){
             // Broadcast to all connecting users except the creator
-            const statusOwnerSocketId = req.socketUserMap.get(status.user._id.toString())
+            const statusOwnerSocketId = await req.socketUserMap.getSocketId(status.user._id.toString());
             if(statusOwnerSocketId){
                 const viewData = {
                     statusId,
@@ -149,7 +150,8 @@ exports.deleteStatus = async(req, res) => {
 
         //Emit socket event
         if(req.io && req.socketUserMap){
-            for(const [connectedUserId, socketId] of req.socketUserMap){
+            const onlineUsersList = await req.socketUserMap.getAllOnlineUsers();
+            for(const [connectedUserId, socketId] of onlineUsersList){
                 if(connectedUserId !== userId){
                     req.io.to(socketId).emit("status_deleted", statusId);
                 }

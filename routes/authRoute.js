@@ -7,6 +7,7 @@ const router = express.Router();
 
 router.post('/send-otp', authController.sendOtp);
 router.post('/verify-otp', authController.verifyOtp);
+router.post('/register-manual', multerMiddleware, authController.registerManual);
 router.get('/logout', authController.logout);
 
 //protected route
