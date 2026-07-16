@@ -58,8 +58,8 @@ const sendOtp = async (req, res) => {
             user = new User({ phoneNumber, phoneSuffix })
         }
 
-        const hasTwilio = process.env.TWILIO_ACCOUNT_SID && 
-                          process.env.TWILIO_ACCOUNT_SID !== 'paste_your_twilio_account_sid_here';
+        const hasTwilio = process.env.TWILIO_ACCOUNT_SID &&
+            process.env.TWILIO_ACCOUNT_SID !== 'paste_your_twilio_account_sid_here';
 
         if (hasTwilio) {
             await twilioService.sendOtpToPhoneNumber(fullPhoneNumber);
@@ -110,8 +110,8 @@ const verifyOtp = async (req, res) => {
                 return response(res, 404, "User not found");
             }
 
-            const hasTwilio = process.env.TWILIO_ACCOUNT_SID && 
-                              process.env.TWILIO_ACCOUNT_SID !== 'paste_your_twilio_account_sid_here';
+            const hasTwilio = process.env.TWILIO_ACCOUNT_SID &&
+                process.env.TWILIO_ACCOUNT_SID !== 'paste_your_twilio_account_sid_here';
 
             if (hasTwilio) {
                 const result = await twilioService.verifyOtp(fullPhoneNumber, otp);
@@ -179,7 +179,7 @@ const registerManual = async (req, res) => {
                 if (!isMatch) {
                     if (isRedisAvailable()) {
                         const currentCount = await redis.incr(wrongPasswordKey);
-                        
+
                         // Set TTL on first fail OR on lockout threshold (fresh 60s lockout)
                         if (currentCount === 1 || currentCount === 5) {
                             await redis.expire(wrongPasswordKey, 60);
@@ -190,7 +190,7 @@ const registerManual = async (req, res) => {
                                 await redis.expire(wrongPasswordKey, 60);
                             }
                         }
-                        
+
                         if (currentCount >= 5) {
                             return response(res, 429, "Too many registration attempts.");
                         }
@@ -212,12 +212,12 @@ const registerManual = async (req, res) => {
             if (username) user.username = username;
             if (preferredLanguage) user.preferredLanguage = preferredLanguage;
             if (about) user.about = about;
-            
+
             if (file) {
                 const uploadResult = await uploadFileToCloudinary(file);
                 user.profilePicture = uploadResult?.secure_url;
             }
-            
+
             user.isOnline = true;
             user.isVerified = true;
             await user.save();

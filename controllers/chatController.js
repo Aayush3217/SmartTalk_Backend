@@ -9,21 +9,33 @@ const redisService = require('../services/redisService');
 
 exports.sendMessage = async(req, res) => {
     try {
-        const {senderId, receiverId, content, messageStatus} = req.body;
+        const {senderId, receiverId, conversationId, content, messageStatus} = req.body;
         const file = req.file;
 
-        const participants = [senderId,receiverId].sort();
-        //check if conversation already exists
-        let conversation = await Conversation.findOne({
-            participants: participants
-        });
-
-        //conversation not exists create new conversation
-        if(!conversation){
-            conversation = new Conversation({
-                participants
+        let conversation;
+        if (conversationId) {
+            conversation = await Conversation.findById(conversationId);
+        } else if (receiverId) {
+            const participants = [senderId, receiverId].sort();
+            // check if 1-to-1 conversation already exists
+            conversation = await Conversation.findOne({
+                participants: participants,
+                isGroup: { $ne: true }
             });
-            await conversation.save();
+
+            // conversation not exists create new conversation
+            if (!conversation) {
+                conversation = new Conversation({
+                    participants
+                });
+                await conversation.save();
+            }
+        } else {
+            return response(res, 400, "Receiver ID or Conversation ID is required");
+        }
+
+        if (!conversation) {
+            return response(res, 404, "Conversation not found");
         }
 
         let imageOrVideoUrl = null;
@@ -33,7 +45,7 @@ exports.sendMessage = async(req, res) => {
         if(file){
             const uploadFile = await uploadFileToCloudinary(file);
 
-            if(!uploadFile?.secure_url){ // (?)-> means check karna secure_url aa raha ha y nahi
+            if(!uploadFile?.secure_url){
                 return response(res, 400, "Failed to upload media");
             }
             imageOrVideoUrl = uploadFile?.secure_url;
@@ -45,33 +57,30 @@ exports.sendMessage = async(req, res) => {
             }else{
                 return response(res, 400, "Unsupported file type");
             }
-        }else if(content?.trim()){   // trim -> content ke andar kuch string to ha na
+        }else if(content?.trim()){
             contentType = "text";
         }else{
             return response(res, 400, "Message content is required");
         }
 
         const message = new Message({
-            conversation: conversation?._id,
+            conversation: conversation._id,
             sender: senderId,
-            receiver: receiverId,
+            receiver: conversation.isGroup ? undefined : (receiverId || conversation.participants.find(p => p.toString() !== senderId)),
             content,
             contentType,
             imageOrVideoUrl: imageOrVideoUrl,
-            messageStatus
+            messageStatus: conversation.isGroup ? 'send' : messageStatus
         });
 
         await message.save();
-        await redisService.invalidateChatCache(conversation?._id.toString());
+        await redisService.invalidateChatCache(conversation._id.toString());
 
-        if(message?.content){ // if content is coming 
-            conversation.lastMessage = message?._id;
-        }
-        conversation.unreadCount+=1;
+        conversation.lastMessage = message._id;
+        conversation.unreadCount += 1;
         await conversation.save();
 
-
-        const populateMessage = await Message.findById(message?._id)
+        const populateMessage = await Message.findById(message._id)
             .populate("sender", "username profilePicture preferredLanguage")
             .populate("receiver", "username profilePicture preferredLanguage");
 
@@ -84,26 +93,27 @@ exports.sendMessage = async(req, res) => {
 
             if (contentType === 'text' && content) {
                 const senderUser = await User.findById(senderId);
-                const receiverUser = await User.findById(receiverId);
+                message.originalLanguage = senderUser ? (senderUser.preferredLanguage || 'English') : 'English';
+                needsSave = true;
 
-                if (senderUser && receiverUser) {
-                    const sourceLang = senderUser.preferredLanguage || 'English';
-                    const targetLang = receiverUser.preferredLanguage || 'English';
+                if (!conversation.isGroup && receiverId) {
+                    const receiverUser = await User.findById(receiverId);
+                    if (senderUser && receiverUser) {
+                        const sourceLang = senderUser.preferredLanguage || 'English';
+                        const targetLang = receiverUser.preferredLanguage || 'English';
 
-                    message.originalLanguage = sourceLang;
-                    needsSave = true;
-
-                    if (sourceLang.toLowerCase() !== targetLang.toLowerCase()) {
-                        try {
-                            const translatedText = await translateText(content, sourceLang, targetLang);
-                            if (translatedText && translatedText !== content) {
-                                message.translations.push({
-                                    language: targetLang,
-                                    content: translatedText
-                                });
+                        if (sourceLang.toLowerCase() !== targetLang.toLowerCase()) {
+                            try {
+                                const translatedText = await translateText(content, sourceLang, targetLang);
+                                if (translatedText && translatedText !== content) {
+                                    message.translations.push({
+                                        language: targetLang,
+                                        content: translatedText
+                                    });
+                                }
+                            } catch (err) {
+                                console.error("Background translation failed:", err.message);
                             }
-                        } catch (err) {
-                            console.error("Background translation failed:", err.message);
                         }
                     }
                 }
@@ -119,12 +129,12 @@ exports.sendMessage = async(req, res) => {
                 .populate("receiver", "username profilePicture preferredLanguage");
 
             // Emit socket event for realtime delivery
-            if (req.io && req.socketUserMap) {
-                const receiverSocketId = await req.socketUserMap.getSocketId(receiverId);
-                if (receiverSocketId) {
-                    req.io.to(receiverId).emit("receive_message", finalMessage);
-                    message.messageStatus = "delivered";
-                    await message.save();
+            if (req.io) {
+                if (conversation.isGroup) {
+                    req.io.to(conversation._id.toString()).emit("receive_message", finalMessage);
+                } else {
+                    const targetId = receiverId || conversation.participants.find(p => p.toString() !== senderId);
+                    req.io.to(targetId.toString()).emit("receive_message", finalMessage);
                 }
             }
         })().catch(err => console.error("Background message dispatch error:", err));
@@ -265,9 +275,11 @@ exports.deleteMessage = async(req, res) => {
         await redisService.invalidateChatCache(message.conversation.toString());
 
         // Emit socket event
-        if(req.io && req.socketUserMap){
-            const receiverSocketId = await req.socketUserMap.getSocketId(message.receiver.toString());
-            if(receiverSocketId){
+        if (req.io) {
+            const conv = await Conversation.findById(message.conversation);
+            if (conv && conv.isGroup) {
+                req.io.to(message.conversation.toString()).emit("message_deleted", messageId);
+            } else if (message.receiver) {
                 req.io.to(message.receiver.toString()).emit("message_deleted", messageId);
             }
         }
@@ -278,3 +290,70 @@ exports.deleteMessage = async(req, res) => {
         return response(res, 500, "Internal server error");        
     }
 }
+
+// Create Group Chat Conversation
+exports.createGroupConversation = async (req, res) => {
+    try {
+        const { groupName, participants: participantsRaw } = req.body;
+        const file = req.file; // group avatar file
+        const creatorId = req.user.userId;
+
+        if (!groupName || !groupName.trim()) {
+            return response(res, 400, "Group name is required");
+        }
+
+        let participants = [];
+        if (typeof participantsRaw === 'string') {
+            try {
+                participants = JSON.parse(participantsRaw);
+            } catch (err) {
+                participants = participantsRaw.split(',').map(id => id.trim());
+            }
+        } else if (Array.isArray(participantsRaw)) {
+            participants = participantsRaw;
+        }
+
+        // Add creator to participants if not already present
+        if (!participants.includes(creatorId)) {
+            participants.push(creatorId);
+        }
+
+        if (participants.length < 2) {
+            return response(res, 400, "A group must have at least 2 participants");
+        }
+
+        let groupAvatar = null;
+        if (file) {
+            const uploadFile = await uploadFileToCloudinary(file);
+            if (uploadFile?.secure_url) {
+                groupAvatar = uploadFile.secure_url;
+            }
+        }
+
+        const newGroup = new Conversation({
+            participants,
+            isGroup: true,
+            groupName: groupName.trim(),
+            groupAvatar: groupAvatar || 'https://cdn-icons-png.flaticon.com/512/166/166258.png', // default group icon
+            groupAdmin: creatorId
+        });
+
+        await newGroup.save();
+
+        const populatedGroup = await Conversation.findById(newGroup._id)
+            .populate("participants", "username profilePicture isOnline lastSeen")
+            .populate("groupAdmin", "username profilePicture");
+
+        // Notify participants via socket that a group has been created
+        if (req.io) {
+            participants.forEach(participantId => {
+                req.io.to(participantId).emit("group_created", populatedGroup);
+            });
+        }
+
+        return response(res, 201, "Group conversation created successfully", populatedGroup);
+    } catch (error) {
+        console.error("createGroupConversation error:", error);
+        return response(res, 500, error.message || "Internal server error");
+    }
+};

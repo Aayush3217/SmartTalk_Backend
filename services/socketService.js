@@ -2,6 +2,7 @@ const { Server } = require('socket.io');
 const User = require('../models/users');
 const Message = require('../models/Message');
 const redisService = require('./redisService');
+const Conversation = require('../models/Conversation');
 
 //Map to track typing status -> userId -> [converstion]: boolean
 const typingUsers = new Map();
@@ -44,6 +45,13 @@ const initializeSocket = (server) => {
                 await redisService.setUserOnline(userId, socket.id);
                 socket.join(userId); // join a personal room for direct emits
 
+                // Auto-join all conversation/group rooms this user belongs to
+                const activeConvs = await Conversation.find({ participants: userId });
+                activeConvs.forEach(conv => {
+                    socket.join(conv._id.toString());
+                    console.log(`Socket ${socket.id} auto-joined room ${conv._id}`);
+                });
+
                 //update user status in db
                 await User.findByIdAndUpdate(userId, {
                     isOnline: true,
@@ -68,9 +76,19 @@ const initializeSocket = (server) => {
             })
         });
 
-        // forward message to receiver if online
+        // forward message to receiver or group room if online
         socket.on("send_message", async (message) => {
             try {
+                if (message.conversation) {
+                    const conv = await Conversation.findById(message.conversation);
+                    if (conv && conv.isGroup) {
+                        // Broadcast to everyone in the conversation room except the sender
+                        socket.to(message.conversation.toString()).emit("receive_message", message);
+                        return;
+                    }
+                }
+
+                // Standard 1-to-1 fallback
                 const receiverSocketId = await redisService.getSocketId(message.receiver?._id);
                 // Instantly sends message to receiver's room.
                 if (receiverSocketId) {
@@ -79,6 +97,14 @@ const initializeSocket = (server) => {
             } catch (error) {
                 console.error("Error sending message", error)
                 socket.emit("message_error", { error: "Failed to send message" })
+            }
+        });
+
+        // join specific conversation room dynamically (e.g. when newly added to a group)
+        socket.on("join_conversation", (conversationId) => {
+            if (conversationId) {
+                socket.join(conversationId.toString());
+                console.log(`Socket ${socket.id} joined conversation room ${conversationId}`);
             }
         });
 
@@ -105,8 +131,8 @@ const initializeSocket = (server) => {
         });
 
         // handle typing start event and auto-stop after 3s
-        socket.on("typing_start", ({ conversationId, receiverId }) => {
-            if (!userId || !conversationId || !receiverId) return;
+        socket.on("typing_start", async ({ conversationId, receiverId }) => {
+            if (!userId || !conversationId) return;
 
             if (!typingUsers.has(userId)) typingUsers.set(userId, {});
 
@@ -119,26 +145,31 @@ const initializeSocket = (server) => {
                 clearTimeout(userTyping[`${conversationId}_timeout`])
             }
 
+            const senderUser = await User.findById(userId);
+            const username = senderUser ? senderUser.username : 'Someone';
+
             //auto-stop after 3s
             userTyping[`${conversationId}_timeout`] = setTimeout(() => {
                 userTyping[conversationId] = false;
-                socket.to(receiverId).emit("user_typing", {
+                socket.to(conversationId.toString()).emit("user_typing", {
                     userId,
+                    username,
                     conversationId,
                     isTyping: false
                 })
             }, 3000)
 
-            //Notify receiver
-            socket.to(receiverId).emit("user_typing", {
+            //Notify room (broadcast to everyone in conversation room except typing user)
+            socket.to(conversationId.toString()).emit("user_typing", {
                 userId,
+                username,
                 conversationId,
                 isTyping: true
             })
         });
 
-        socket.on("typing_stop", ({ conversationId, receiverId }) => {
-            if (!userId || !conversationId || !receiverId) return;
+        socket.on("typing_stop", async ({ conversationId, receiverId }) => {
+            if (!userId || !conversationId) return;
 
             if (typingUsers.has(userId)) {
                 const userTyping = typingUsers.get(userId);
@@ -150,8 +181,12 @@ const initializeSocket = (server) => {
                 }
             };
 
-            socket.to(receiverId).emit("user_typing", {
+            const senderUser = await User.findById(userId);
+            const username = senderUser ? senderUser.username : 'Someone';
+
+            socket.to(conversationId.toString()).emit("user_typing", {
                 userId,
+                username,
                 conversationId,
                 isTyping: false
             })
