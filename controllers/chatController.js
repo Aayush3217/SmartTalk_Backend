@@ -102,7 +102,9 @@ exports.sendMessage = async(req, res) => {
                         const sourceLang = senderUser.preferredLanguage || 'English';
                         const targetLang = receiverUser.preferredLanguage || 'English';
 
-                        if (sourceLang.toLowerCase() !== targetLang.toLowerCase()) {
+                        if (sourceLang.toLowerCase() !== 'no conversion' &&
+                            targetLang.toLowerCase() !== 'no conversion' &&
+                            sourceLang.toLowerCase() !== targetLang.toLowerCase()) {
                             try {
                                 const translatedText = await translateText(content, sourceLang, targetLang);
                                 if (translatedText && translatedText !== content) {
