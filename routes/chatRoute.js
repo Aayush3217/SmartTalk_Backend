@@ -8,6 +8,7 @@ const router = express.Router();
 //protected route
 router.post('/send-message', authMiddleware, multerMiddleware, chatController.sendMessage);
 router.post('/group', authMiddleware, multerMiddleware, chatController.createGroupConversation);
+router.delete('/group/:conversationId', authMiddleware, chatController.deleteGroupConversation);
 router.get('/conversation', authMiddleware, chatController.getConversation);
 router.get('/conversation/:conversationId/messages', authMiddleware, chatController.getMessages);
 

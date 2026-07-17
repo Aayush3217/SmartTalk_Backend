@@ -357,3 +357,48 @@ exports.createGroupConversation = async (req, res) => {
         return response(res, 500, error.message || "Internal server error");
     }
 };
+
+// Delete Group Conversation (authorized for group admin)
+exports.deleteGroupConversation = async (req, res) => {
+    try {
+        const { conversationId } = req.params;
+        const userId = req.user.userId;
+
+        const conversation = await Conversation.findById(conversationId);
+        if (!conversation) {
+            return response(res, 404, "Conversation not found");
+        }
+
+        if (!conversation.isGroup) {
+            return response(res, 400, "This conversation is not a group chat");
+        }
+
+        // Verify that requester is the admin of the group
+        if (conversation.groupAdmin.toString() !== userId) {
+            return response(res, 403, "Not authorized to delete this group. Only the group admin can delete it.");
+        }
+
+        const participants = conversation.participants;
+
+        // Delete all messages associated with the conversation
+        await Message.deleteMany({ conversation: conversationId });
+
+        // Delete the conversation itself
+        await conversation.deleteOne();
+
+        // Invalidate Redis chat cache
+        await redisService.invalidateChatCache(conversationId);
+
+        // Notify all participants in real time via socket
+        if (req.io) {
+            participants.forEach(participantId => {
+                req.io.to(participantId.toString()).emit("group_deleted", { conversationId });
+            });
+        }
+
+        return response(res, 200, "Group chat and all its messages deleted successfully");
+    } catch (error) {
+        console.error("deleteGroupConversation error:", error);
+        return response(res, 500, error.message || "Internal server error");
+    }
+};

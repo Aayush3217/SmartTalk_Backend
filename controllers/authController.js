@@ -9,6 +9,7 @@ const Conversation = require('../models/Conversation');
 const redisService = require('../services/redisService');
 const bcrypt = require('bcryptjs');
 const { redis, isRedisAvailable } = require("../config/redis");
+const Message = require('../models/Message');
 
 
 //step-1 Send Otp
@@ -354,6 +355,74 @@ const getAllUser = async (req, res) => {
     }
 }
 
+// Delete User Account
+const deleteUserAccount = async (req, res) => {
+    try {
+        const userId = req.user.userId;
+
+        // 1. Find user and verify existence
+        const user = await User.findById(userId);
+        if (!user) {
+            return response(res, 404, "User not found");
+        }
+
+        // 2. Find all conversations involving this user
+        const conversations = await Conversation.find({ participants: userId });
+
+        for (const conv of conversations) {
+            if (conv.isGroup) {
+                // If it is a group chat:
+                // Remove the user from participants list
+                conv.participants = conv.participants.filter(p => p.toString() !== userId);
+                
+                if (conv.participants.length === 0) {
+                    // If no participants left, delete the group and all its messages
+                    await Message.deleteMany({ conversation: conv._id });
+                    await conv.deleteOne();
+                    await redisService.invalidateChatCache(conv._id.toString());
+                } else {
+                    // If this user was the admin, transfer the admin role to another participant
+                    if (conv.groupAdmin && conv.groupAdmin.toString() === userId) {
+                        conv.groupAdmin = conv.participants[0];
+                    }
+                    await conv.save();
+                    // Invalidate cache for the remaining group members
+                    await redisService.invalidateChatCache(conv._id.toString());
+                }
+            } else {
+                // If it is a 1-to-1 chat:
+                // Delete all messages belonging to this conversation
+                await Message.deleteMany({ conversation: conv._id });
+                // Delete the conversation document
+                await conv.deleteOne();
+                // Invalidate Redis chat cache
+                await redisService.invalidateChatCache(conv._id.toString());
+            }
+        }
+
+        // 3. Mark user offline and clean up Redis online mapping
+        if (isRedisAvailable()) {
+            await redisService.removeUserOnline(userId);
+        }
+
+        // 4. Delete the User record from MongoDB
+        await user.deleteOne();
+
+        // 5. Notify all other clients in real time via Socket.IO
+        if (req.io) {
+            req.io.emit("user_deleted", { userId });
+        }
+
+        // 6. Clear HTTP-only cookies if any are set
+        res.clearCookie("auth_token");
+
+        return response(res, 200, "Account deleted successfully");
+    } catch (error) {
+        console.error("deleteUserAccount error:", error);
+        return response(res, 500, error.message || "Internal server error");
+    }
+};
+
 module.exports = {
     sendOtp,
     verifyOtp,
@@ -361,5 +430,6 @@ module.exports = {
     updateProfile,
     logout,
     checkAuthenticated,
-    getAllUser
+    getAllUser,
+    deleteUserAccount
 }
