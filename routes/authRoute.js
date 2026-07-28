@@ -52,6 +52,7 @@ const registerLimiter = rateLimiter({
 router.post('/send-otp', sendOtpLimiter, authController.sendOtp);
 router.post('/verify-otp', verifyOtpLimiter, authController.verifyOtp);
 router.post('/register-manual', multerMiddleware, loginLimiter, registerLimiter, authController.registerManual);
+router.post('/google-login', authController.googleLogin);
 router.get('/logout', authController.logout);
 
 //protected route

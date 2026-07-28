@@ -10,42 +10,19 @@ const redisService = require('../services/redisService');
 const bcrypt = require('bcryptjs');
 const { redis, isRedisAvailable } = require("../config/redis");
 const Message = require('../models/Message');
+const { verifyFirebaseToken } = require("../utils/firebaseVerifier");
 
 
 //step-1 Send Otp
 const sendOtp = async (req, res) => {
-    const { phoneNumber, phoneSuffix, email, mode } = req.body;
+    const { email, mode } = req.body;
     let user;
     try {
-        if (email) {
-            user = await User.findOne({ email });
-
-            if (mode === 'login' && !user) {
-                return response(res, 404, 'Account not found. Please sign up first.');
-            }
-            if (mode === 'signup' && user) {
-                return response(res, 400, 'Account already exists. Please log in instead.');
-            }
-
-            // Create new User
-            if (!user) {
-                user = new User({ email });
-                await user.save();
-            }
-
-            const otp = otpGenerate();
-            // Store OTP in Redis instead of MongoDB (Feature 2)
-            await redisService.saveOtp(email, otp);
-
-            await sendOtpToEmail(email, otp);
-            return response(res, 200, 'Otp send to your email', { email });
+        if (!email) {
+            return response(res, 400, 'Email is required');
         }
 
-        if (!phoneNumber || !phoneSuffix) {
-            return response(res, 400, 'Phone number and phone suffix are required');
-        }
-
-        user = await User.findOne({ phoneNumber, phoneSuffix });
+        user = await User.findOne({ email });
 
         if (mode === 'login' && !user) {
             return response(res, 404, 'Account not found. Please sign up first.');
@@ -54,25 +31,18 @@ const sendOtp = async (req, res) => {
             return response(res, 400, 'Account already exists. Please log in instead.');
         }
 
-        const fullPhoneNumber = `${phoneSuffix}${phoneNumber}`;
+        // Create new User
         if (!user) {
-            user = new User({ phoneNumber, phoneSuffix })
+            user = new User({ email });
+            await user.save();
         }
 
-        const hasTwilio = process.env.TWILIO_ACCOUNT_SID &&
-            process.env.TWILIO_ACCOUNT_SID !== 'paste_your_twilio_account_sid_here';
+        const otp = otpGenerate();
+        // Store OTP in Redis instead of MongoDB (Feature 2)
+        await redisService.saveOtp(email, otp);
 
-        if (hasTwilio) {
-            await twilioService.sendOtpToPhoneNumber(fullPhoneNumber);
-        } else {
-            const otp = otpGenerate();
-            await redisService.saveOtp(fullPhoneNumber, otp);
-            console.log(`[LOCAL DEV SMS] OTP code for ${fullPhoneNumber} is: ${otp}`);
-        }
-
-        await user.save();
-
-        return response(res, 200, 'Otp send successfully', user);
+        await sendOtpToEmail(email, otp);
+        return response(res, 200, 'Otp sent to your email', { email });
     } catch (error) {
         console.error("sendOtp error:", error);
         return response(res, 500, error.message || 'Internal server error');
@@ -82,53 +52,26 @@ const sendOtp = async (req, res) => {
 
 // Step-2 Verify Otp
 const verifyOtp = async (req, res) => {
-    const { phoneNumber, phoneSuffix, email, otp } = req.body;
+    const { email, otp } = req.body;
 
     try {
-        let user;
-        if (email) {
-            user = await User.findOne({ email });
-            if (!user) {
-                return response(res, 404, 'User not found');
-            }
-
-            // Verify using Redis instead of MongoDB (Feature 2)
-            const isVerified = await redisService.verifyAndDestroyOtp(email, otp);
-            if (!isVerified) {
-                return response(res, 400, 'Invalid or expired otp');
-            }
-
-            user.isVerified = true;
-            await user.save();
-        } else {
-            if (!phoneNumber || !phoneSuffix) {
-                return response(res, 400, 'Phone number and phone suffix are required');
-            }
-
-            const fullPhoneNumber = `${phoneSuffix}${phoneNumber}`;
-            user = await User.findOne({ phoneNumber, phoneSuffix });
-            if (!user) {
-                return response(res, 404, "User not found");
-            }
-
-            const hasTwilio = process.env.TWILIO_ACCOUNT_SID &&
-                process.env.TWILIO_ACCOUNT_SID !== 'paste_your_twilio_account_sid_here';
-
-            if (hasTwilio) {
-                const result = await twilioService.verifyOtp(fullPhoneNumber, otp);
-                if (result.status !== "approved") {
-                    return response(res, 400, "Invalid Otp");
-                }
-            } else {
-                const isVerified = await redisService.verifyAndDestroyOtp(fullPhoneNumber, otp);
-                if (!isVerified) {
-                    return response(res, 400, "Invalid or expired Otp");
-                }
-            }
-
-            user.isVerified = true;
-            await user.save();
+        if (!email || !otp) {
+            return response(res, 400, 'Email and OTP are required');
         }
+
+        let user = await User.findOne({ email });
+        if (!user) {
+            return response(res, 404, 'User not found');
+        }
+
+        // Verify using Redis instead of MongoDB (Feature 2)
+        const isVerified = await redisService.verifyAndDestroyOtp(email, otp);
+        if (!isVerified) {
+            return response(res, 400, 'Invalid or expired otp');
+        }
+
+        user.isVerified = true;
+        await user.save();
 
         const token = generateToken(user?._id); // this is authentaction
 
@@ -423,6 +366,61 @@ const deleteUserAccount = async (req, res) => {
     }
 };
 
+const googleLogin = async (req, res) => {
+    const { idToken } = req.body;
+    if (!idToken) {
+        return response(res, 400, "Firebase ID Token is required");
+    }
+
+    try {
+        const decodedToken = await verifyFirebaseToken(idToken);
+        const { email, name, picture, email_verified } = decodedToken;
+
+        if (!email) {
+            return response(res, 400, "Email not found in Firebase token");
+        }
+
+        let user = await User.findOne({ email });
+
+        if (!user) {
+            const baseUsername = name || email.split('@')[0];
+            
+            user = new User({
+                username: baseUsername,
+                email: email,
+                isVerified: email_verified || true,
+                profilePicture: picture || '',
+                isOnline: true,
+                about: 'Hey there! I am using smartTalk.',
+                preferredLanguage: 'English'
+            });
+            await user.save();
+        } else {
+            user.isOnline = true;
+            user.isVerified = true;
+            if (picture && !user.profilePicture) {
+                user.profilePicture = picture;
+            }
+            await user.save();
+        }
+
+        const token = generateToken(user._id);
+
+        res.cookie("auth_token", token, {
+            httpOnly: true,
+            secure: true,        // HTTPS only
+            sameSite: "None",    // Required for Vercel <-> Render
+            path: "/",
+            maxAge: 1000 * 60 * 60 * 24 * 365,
+        });
+
+        return response(res, 200, "Google Sign-In successful", { token, user });
+    } catch (error) {
+        console.error("googleLogin error:", error);
+        return response(res, 500, error.message || "Firebase authentication failed");
+    }
+};
+
 module.exports = {
     sendOtp,
     verifyOtp,
@@ -431,5 +429,6 @@ module.exports = {
     logout,
     checkAuthenticated,
     getAllUser,
-    deleteUserAccount
+    deleteUserAccount,
+    googleLogin
 }
