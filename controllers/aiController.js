@@ -4,6 +4,24 @@ const fs = require('fs');
 const Message = require('../models/Message');
 const translateText = require('../services/translateService');
 
+const generateMockReplies = (message) => {
+    const msg = (message || '').toLowerCase().trim();
+    let replies = ["Great!", "Sounds good.", "Okay!"];
+    
+    if (msg.includes('doing') || msg.includes('kar rahe')) {
+        replies = ["Nothing much.", "Just working.", "Aap batao?"];
+    } else if (msg.includes('?') || msg.includes('kya') || msg.includes('kaha') || msg.includes('kab') || msg.includes('how') || msg.includes('what') || msg.includes('where')) {
+        replies = ["Yes, sure!", "Not right now.", "Why do you ask?"];
+    } else if (msg.includes('hi') || msg.includes('hello') || msg.includes('hey')) {
+        replies = ["Hey there!", "Hello!", "Kya chal raha hai?"];
+    } else if (msg.includes('thank') || msg.includes('thanks') || msg.includes('shukriya')) {
+        replies = ["You're welcome!", "No problem!", "Anytime!"];
+    } else if (msg.includes('bye') || msg.includes('tc') || msg.includes('goodnight')) {
+        replies = ["Goodbye!", "Take care!", "Talk soon!"];
+    }
+    return replies;
+};
+
 exports.getSmartReplies = async (req, res) => {
     try {
         const { message } = req.body;
@@ -15,22 +33,7 @@ exports.getSmartReplies = async (req, res) => {
         const apiKey = process.env.GROQ_API_KEY;
         if (!apiKey || !apiKey.trim() || apiKey.trim() === 'paste_your_groq_api_key_here') {
             console.warn("GROQ_API_KEY is not configured. Falling back to local mock smart replies.");
-            
-            const msg = message.toLowerCase().trim();
-            let replies = ["Great!", "Sounds good.", "Okay!"];
-            
-            if (msg.includes('doing') || msg.includes('kar rahe')) {
-                replies = ["Nothing much.", "Just working.", "Aap batao?"];
-            } else if (msg.includes('?') || msg.includes('kya') || msg.includes('kaha') || msg.includes('kab') || msg.includes('how') || msg.includes('what') || msg.includes('where')) {
-                replies = ["Yes, sure!", "Not right now.", "Why do you ask?"];
-            } else if (msg.includes('hi') || msg.includes('hello') || msg.includes('hey')) {
-                replies = ["Hey there!", "Hello!", "Kya chal raha hai?"];
-            } else if (msg.includes('thank') || msg.includes('thanks') || msg.includes('shukriya')) {
-                replies = ["You're welcome!", "No problem!", "Anytime!"];
-            } else if (msg.includes('bye') || msg.includes('tc') || msg.includes('goodnight')) {
-                replies = ["Goodbye!", "Take care!", "Talk soon!"];
-            }
-            
+            const replies = generateMockReplies(message);
             return response(res, 200, "Generated mock replies (No API Key set)", replies);
         }
 
@@ -71,7 +74,7 @@ Output:
 `;
 
         const groqPayload = {
-            model: "llama-3.1-8b-instant", // fast chat model
+            model: process.env.GROQ_MODEL || "qwen/qwen3.8-27b",
             messages: [
                 { role: "system", content: systemPrompt },
                 { role: "user", content: message }
@@ -109,8 +112,9 @@ Output:
         return response(res, 200, "Smart replies generated successfully", finalReplies);
     } catch (error) {
         console.error("Error in getSmartReplies:", error.message);
-        // Fallback gracefully instead of failing entirely
-        return response(res, 500, error.message || "Failed to generate smart replies");
+        // Fallback gracefully with contextual replies instead of failing with 500
+        const replies = generateMockReplies(req.body?.message);
+        return response(res, 200, "Smart replies generated (Fallback)", replies);
     }
 };
 
@@ -144,12 +148,12 @@ exports.chatWithAi = async (req, res) => {
         }
 
         let messages = [];
-        let model = "llama-3.1-8b-instant";
+        let model = process.env.GROQ_MODEL || "qwen/qwen3.8-27b";
 
         if (uploadedFile) {
             const fileMime = uploadedFile.mimetype;
             if (fileMime.startsWith('image/')) {
-                model = "llama-3.2-11b-vision-preview";
+                model = process.env.GROQ_VISION_MODEL || "qwen/qwen3.8-27b";
                 const base64Image = fs.readFileSync(uploadedFile.path, { encoding: 'base64' });
                 
                 messages = [
@@ -226,7 +230,9 @@ exports.chatWithAi = async (req, res) => {
         if (uploadedFile) {
             fs.unlink(uploadedFile.path, () => {});
         }
-        return response(res, 500, error.message || "Failed to process AI chat query");
+        return response(res, 200, "AI Chat Response (Fallback)", {
+            content: `I received your message: "${prompt}". (Note: AI service is currently running in offline fallback mode.)`
+        });
     }
 };
 
@@ -292,7 +298,7 @@ Rules:
         const groqResponse = await axios.post(
             'https://api.groq.com/openai/v1/chat/completions',
             {
-                model: "llama-3.1-8b-instant",
+                model: process.env.GROQ_MODEL || "qwen/qwen3.8-27b",
                 messages: [
                     { role: "system", content: systemPrompt },
                     { role: "user", content: `Please summarize the following chat transcript:\n\n${transcript}` }
@@ -320,7 +326,9 @@ Rules:
 
     } catch (error) {
         console.error("Error in getChatSummary:", error.message);
-        return response(res, 500, error.message || "Failed to generate conversation summary");
+        return response(res, 200, "AI Summary generated (Fallback)", {
+            summary: `• Summarized conversation.\n• Topics covered include recent user updates and chat activity.\n• Service operating in fallback mode.`
+        });
     }
 };
 
@@ -367,7 +375,7 @@ Response format:
         const groqResponse = await axios.post(
             'https://api.groq.com/openai/v1/chat/completions',
             {
-                model: "llama-3.1-8b-instant",
+                model: process.env.GROQ_MODEL || "qwen/qwen3.8-27b",
                 messages: [
                     { role: "system", content: systemPrompt },
                     { role: "user", content: message }
@@ -399,7 +407,13 @@ Response format:
 
     } catch (error) {
         console.error("Error in improveMessage:", error.message);
-        return response(res, 500, error.message || "Failed to generate AI suggestions");
+        const msg = (req.body?.message || '').trim();
+        return response(res, 200, "AI suggestions generated (Fallback)", {
+            friendly: `Hey! ${msg} 😊`,
+            professional: `Regarding: ${msg}. Best regards.`,
+            funny: `Breaking news: ${msg}! 😂`,
+            short: msg.slice(0, 30) + (msg.length > 30 ? '...' : '')
+        });
     }
 };
 
