@@ -10,7 +10,6 @@ const statusRoute = require('./routes/statusRoute');
 const aiRoute = require('./routes/aiRoute');
 const http = require('http');
 const initializeSocket = require('./services/socketService');
-const healthRoute = require('./routes/healthRoute');
 
 
 dotenv.config();
