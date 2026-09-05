@@ -10,7 +10,8 @@ const statusRoute = require('./routes/statusRoute');
 const aiRoute = require('./routes/aiRoute');
 const http = require('http');
 const initializeSocket = require('./services/socketService');
- 
+const healthRoute = require('./routes/healthRoute');
+
 
 dotenv.config();
 
@@ -41,7 +42,7 @@ app.use(cors(corsOptions));
 //MiddleWare
 app.use(express.json()) //parse body data
 app.use(cookieParser()) //parse token on every request
-app.use(bodyParser.urlencoded({extended:true}));
+app.use(bodyParser.urlencoded({ extended: true }));
 
 
 //database connection
@@ -65,7 +66,7 @@ app.use((req, res, next) => {
 app.get('/health', async (req, res) => {
     const mongoStatus = require('mongoose').connection.readyState === 1 ? 'connected' : 'disconnected';
     const redisStatus = require('./services/redisService').isRedisAvailable() ? 'connected' : 'disconnected';
-    
+
     return res.status(200).json({
         server: "OK",
         mongodb: mongoStatus,
@@ -77,6 +78,9 @@ app.use('/api/auth', authRoute);
 app.use('/api/chats', chatRoute);
 app.use('/api/status', statusRoute);
 app.use('/api/ai', aiRoute);
+
+// health check
+app.use('/api/health', healthRoute);
 
 server.listen(PORT, () => {
     console.log(`Server running on this port: ${PORT}`)
