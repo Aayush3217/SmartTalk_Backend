@@ -79,9 +79,6 @@ app.use('/api/chats', chatRoute);
 app.use('/api/status', statusRoute);
 app.use('/api/ai', aiRoute);
 
-// health check
-app.use('/api/health', healthRoute);
-
 server.listen(PORT, () => {
     console.log(`Server running on this port: ${PORT}`)
 })
